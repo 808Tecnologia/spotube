@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -14,12 +15,25 @@ import 'package:spotube/components/titlebar/titlebar.dart';
 import 'package:spotube/components/track_tile/track_options_button.dart';
 import 'package:spotube/extensions/context.dart';
 import 'package:spotube/extensions/list.dart';
+import 'package:spotube/domain/entities/track.dart' as domain;
 import 'package:spotube/models/metadata/metadata.dart';
-import 'package:spotube/provider/audio_player/audio_player.dart';
+import 'package:spotube/presentation/bloc/player_bloc.dart';
 import 'package:spotube/provider/metadata_plugin/tracks/track.dart';
-import 'package:spotube/services/audio_player/audio_player.dart';
 
 import 'package:spotube/extensions/constrains.dart';
+
+extension on SpotubeTrackObject {
+  domain.Track toDomainTrack() {
+    return domain.Track(
+      id: id,
+      title: name,
+      artist: artists.map((a) => a.name).join(', '),
+      album: album.name,
+      artworkUrl: album.images.asUrlString(placeholder: ImagePlaceholder.albumArt),
+      duration: Duration(milliseconds: durationMs),
+    );
+  }
+}
 import 'package:auto_route/auto_route.dart';
 
 @RoutePage()
@@ -37,32 +51,36 @@ class TrackPage extends HookConsumerWidget {
     final ThemeData(:typography, :colorScheme) = Theme.of(context);
     final mediaQuery = MediaQuery.of(context);
 
-    final playlist = ref.watch(audioPlayerProvider);
-    final playlistNotifier = ref.watch(audioPlayerProvider.notifier);
-
-    final isActive = playlist.activeTrack?.id == trackId;
-
     final trackQuery = ref.watch(metadataPluginTrackProvider(trackId));
-
     final track = trackQuery.asData?.value ?? FakeData.track;
 
-    void onPlay() async {
-      if (isActive) {
-        audioPlayer.pause();
-      } else {
-        await playlistNotifier.load([track], autoPlay: true);
-      }
-    }
+    return BlocProvider(
+      create: (context) => PlayerBloc(),
+      child: BlocBuilder<PlayerBloc, PlayerState>(
+        builder: (context, playerState) {
+          final isActive = playerState is PlayerPlaying && playerState.track.id == trackId;
 
-    return SafeArea(
-      bottom: false,
-      child: Scaffold(
-        headers: const [
-          TitleBar(
-            backgroundColor: Colors.transparent,
-            surfaceBlur: 0,
-          )
-        ],
+          void onPlay() {
+            final playerBloc = context.read<PlayerBloc>();
+            if (isActive) {
+              playerBloc.add(PauseTrack());
+            } else {
+              // This is a temporary conversion. In a full refactor,
+              // `track` would already be a domain `Track` entity.
+              final domainTrack = track.toDomainTrack();
+              playerBloc.add(PlayTrack(domainTrack));
+            }
+          }
+
+          return SafeArea(
+            bottom: false,
+            child: Scaffold(
+              headers: const [
+                TitleBar(
+                  backgroundColor: Colors.transparent,
+                  surfaceBlur: 0,
+                )
+              ],
         floatingHeader: true,
         child: Stack(
           children: [
